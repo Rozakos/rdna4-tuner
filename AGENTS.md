@@ -1,6 +1,7 @@
 # rdna4-tuner — agent rules
 
-A crash-safe automatic undervolt and VRAM tuner for AMD RDNA 4 cards. Read this file, then
+A crash-safe automatic undervolt and VRAM tuner for AMD Radeon cards: RDNA 4 (RX 9000) and
+RDNA 2 (RX 6000) first, RDNA 3 (RX 7000) by design. Read this file, then
 `PLAN.md` (what to build, in order) and `CHANGELOG.md` (where things stand).
 
 Roles: **Codex builds.** Claude reviews at each gate. The owner decides and is the only
@@ -38,7 +39,9 @@ person who runs anything against a real graphics card.
    the intended value. No exceptions, including in tests.
 3. **Read back after apply.** A setter is only successful when the value read back from
    the backend matches. A mismatch is a typed error, never a silent pass.
-4. **Limits come from the backend**, never from constants in the code.
+4. **Limits and capabilities come from the backend**, never from constants in the code.
+   Never branch on a card's name or family in `tuner/core/`; branch on what the backend
+   reports it can do.
 5. **Thresholds are relative to measured baseline and noise**, never absolute numbers
    taken from one card.
 6. **Every tunable is data** in one config module with a comment giving its reason.

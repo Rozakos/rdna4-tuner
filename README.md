@@ -1,7 +1,15 @@
 # rdna4-tuner
 
-A crash-safe automatic undervolt and VRAM tuner for AMD RDNA 4 graphics cards
-(RX 9070 XT, RX 9070, RX 9060 XT). Windows first, Linux later.
+A crash-safe automatic undervolt and VRAM tuner for AMD Radeon graphics cards.
+Windows first, Linux later.
+
+| Family | Cards | Priority |
+|---|---|---|
+| RDNA 4 | RX 9070 XT, 9070, 9060 XT | first |
+| RDNA 2 | RX 6600 XT, 6700 XT and the rest of the RX 6000 series | first |
+| RDNA 3 | RX 7000 series | supported by design, untested until someone has a card |
+
+The name is historical: the project started with RDNA 4 only.
 
 **Status: planning. Nothing here changes a GPU yet.**
 

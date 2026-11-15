@@ -4,10 +4,9 @@ Work top to bottom. Tick a step only after it is verified. Rules are in `AGENTS.
 
 ## 1. Goal
 
-Find a safe undervolt and VRAM clock for an RX 9070 XT / 9070 / 9060 XT and keep it
-applied, where "safe" means it survives real gaming, not a three-minute benchmark.
+Find a safe undervolt and VRAM clock for a Radeon card and keep it applied, where "safe" means it survives real gaming, not a three-minute benchmark.
 
-Done means: on a real RX 9070 XT the tool produces a profile; the profile passes a
+Done means: on a real RX 9070 XT and a real RX 6700 XT the tool produces a profile; the profile passes a
 30-minute mixed verification and a week of normal gaming with no driver crash; and one
 command puts the card back to stock and removes everything the tool installed.
 
@@ -25,8 +24,23 @@ command puts the card back to stock and removes everything the tool installed.
 
 ## 3. Scope
 
-In: Windows 11 first (AMD ADLX), Linux second (amdgpu sysfs). Core voltage offset, VRAM
-maximum frequency and memory timing. Power limit stays at stock. CLI first, GUI later.
+In: Windows 11 first (AMD ADLX), Linux second (amdgpu sysfs). Core voltage, VRAM maximum
+frequency and memory timing. Power limit stays at stock. CLI first, GUI later.
+
+Card families, in priority order:
+
+| Family | Cards | Status |
+|---|---|---|
+| RDNA 4 | RX 9070 XT, 9070, 9060 XT | first; the owner has a 9070 XT |
+| RDNA 2 | RX 6600 XT, 6700 XT, rest of RX 6000 | first; the owner has a 6700 XT |
+| RDNA 3 | RX 7000 | must work by design; untested until a card is available |
+
+The families expose tuning differently, and the design must not assume one of them. As
+far as we know before checking real cards at M2: RDNA 4 exposes a **voltage offset**
+(negative millivolts from stock); RDNA 2 and RDNA 3 expose an **absolute voltage** in
+millivolts together with minimum and maximum clock frequency; VRAM tuning is a maximum
+frequency plus a timing level on all of them, with different ranges. Treat every item in
+this paragraph as unverified until M2 reads it from the driver.
 
 Out: BIOS flashing, power-table edits, fan curves, other GPU families, anything that
 raises voltage or power above stock.
@@ -50,9 +64,10 @@ tests/
 
 ```python
 class Backend(Protocol):
-    def read_limits(self) -> Limits: ...            # voltage offset range, VRAM range, steps
+    def read_capabilities(self) -> Capabilities: ...  # see below
+    def read_limits(self) -> Limits: ...            # ranges and steps for what is supported
     def read_telemetry(self) -> Telemetry: ...      # clock, power, temps, current settings
-    def set_voltage_offset(self, mv: int) -> None: ...   # raises BackendError subclasses
+    def set_voltage(self, reduction_mv: int) -> None: ...  # mV below stock; raises BackendError
     def set_vram(self, mhz: int, timing: Timing) -> None: ...
     def reset(self) -> None: ...                    # back to driver defaults
     def crash_events_since(self, t: datetime) -> list[CrashEvent]: ...
@@ -61,6 +76,13 @@ class Workload(Protocol):
     name: str
     def run(self, seconds: float) -> WorkloadResult: ...   # score, noise, ok, detail
 ```
+
+`Capabilities` says what this card and driver allow: voltage control kind (`offset`,
+`absolute` or `none`), stock voltage where it is absolute, whether clock limits exist,
+whether VRAM frequency and timing can be set, and the card family and name for the
+report. The search engine works in one unit, **millivolts below stock**, and the backend
+translates that to an offset or an absolute value. A card that cannot tune something
+skips that stage and the report says so. `tuner/core/` never branches on a card name.
 
 Typed errors: `OutOfRange`, `Rejected`, `ReadbackMismatch`, `Unavailable`,
 `PermissionDenied`. "Any error" is never treated as "limit reached".
@@ -97,7 +119,9 @@ and a watchdog child process that resets the backend if the main process dies.
 
 ### 4.5 Simulated backend and workloads
 
-A model card with: a hidden voltage limit that depends on load type (bursts fail earlier
+Model cards built from profiles, at least: `rdna4_offset` (offset voltage, RX 9070 XT-like
+ranges), `rdna2_absolute` (absolute voltage and clock limits, RX 6700 XT-like ranges),
+`rdna3_absolute`, and `no_vram_tuning` (VRAM stage unsupported). Each has: a hidden voltage limit that depends on load type (bursts fail earlier
 than full load) and on temperature; a hidden VRAM limit above which bandwidth flattens,
 noise rises and, further up, data errors appear; run-to-run noise; thermal drift during
 long runs; a probability of failure that rises smoothly near the limit instead of a hard
@@ -132,7 +156,8 @@ Done when CI is green on both systems and the journal tests include a real proce
 - [ ] `cli.py tune --backend simulated`, `status`, `report`, `--dry-run`.
 - [ ] Report: values, margins, what was tested and for how long, every failure seen.
 
-Acceptance, as tests over 1,000 seeded simulated cards per preset:
+Acceptance, as tests over 1,000 seeded simulated cards per preset **and per simulated
+profile** (offset, absolute, no VRAM tuning):
 - the accepted voltage is never beyond the card's true stable limit for the verification
   duration, in at least 99.5 % of cards;
 - the accepted value is within `margin + 2 × fine_step` of the true limit in at least
@@ -147,9 +172,11 @@ Acceptance, as tests over 1,000 seeded simulated cards per preset:
 ### M2 — Windows backend, read-only (needs the owner)
 - [ ] C++ ADLX helper: `--limits`, `--status` only. Built by CI. No setter code path.
 - [ ] `adlx_windows.py` implementing the read half of `Backend`.
-- [ ] `cli.py status --backend adlx`.
+- [ ] `cli.py status --backend adlx`, printing capabilities as well as limits.
 
-Done when the owner runs `status` on a real card and the values match Adrenalin.
+Done when the owner runs `status` on a real RX 9070 XT and a real RX 6700 XT and the values
+match Adrenalin on both. Record what each family really exposes in `docs/families.md` and
+correct section 3 where it was wrong.
 
 **STOP. Gate M2.**
 
@@ -157,7 +184,7 @@ Done when the owner runs `status` on a real card and the values match Adrenalin.
 - [ ] Compute-shader workloads: core, burst, VRAM bandwidth, VRAM verify, combined.
 - [ ] Baseline run at stock settings only.
 
-Done when repeated baseline runs on the real card agree within 1 %.
+Done when repeated baseline runs agree within 1 % on both real cards.
 
 **STOP. Gate M3.**
 
@@ -165,6 +192,7 @@ Done when repeated baseline runs on the real card agree within 1 %.
 - [ ] Setters in the helper, with range checks against driver limits and readback.
 - [ ] `tune --backend adlx --no-persist`, `edge` preset verification time only.
 - [ ] Forced-crash recovery checked on the real card.
+- [ ] Repeat on the second family once the first passes.
 
 **STOP. Gate M4.**
 
@@ -175,7 +203,7 @@ Done when repeated baseline runs on the real card agree within 1 %.
 **STOP. Gate M5.**
 
 ### Later (do not start without the owner)
-Linux backend; small GUI; soak mode that backs off automatically after a driver crash
+Linux backend; RDNA 3 confirmation on a real card; small GUI; soak mode that backs off automatically after a driver crash
 during normal use; packaged release built by CI with a checksum.
 
 ## 6. Risks
