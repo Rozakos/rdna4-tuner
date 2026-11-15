@@ -65,16 +65,18 @@ tests/
 ```python
 class Backend(Protocol):
     def read_capabilities(self) -> Capabilities: ...  # see below
-    def read_limits(self) -> Limits: ...            # ranges and steps for what is supported
-    def read_telemetry(self) -> Telemetry: ...      # clock, power, temps, current settings
+    def read_limits(self) -> Limits: ...  # ranges and steps for what is supported
+    def read_telemetry(self) -> Telemetry: ...  # clock, power, temps, current settings
     def set_voltage(self, reduction_mv: int) -> None: ...  # mV below stock; raises BackendError
     def set_vram(self, mhz: int, timing: Timing) -> None: ...
-    def reset(self) -> None: ...                    # back to driver defaults
+    def reset(self) -> None: ...  # back to driver defaults
     def crash_events_since(self, t: datetime) -> list[CrashEvent]: ...
+
 
 class Workload(Protocol):
     name: str
-    def run(self, seconds: float) -> WorkloadResult: ...   # score, noise, ok, detail
+
+    def run(self, seconds: float) -> WorkloadResult: ...  # score, noise, ok, detail
 ```
 
 `Capabilities` says what this card and driver allow: voltage control kind (`offset`,

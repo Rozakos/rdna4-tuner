@@ -1,11 +1,13 @@
-__pycache__/
-*.pyc
 .venv/
+__pycache__/
+*.py[cod]
 .pytest_cache/
 .ruff_cache/
+*.egg-info/
 build/
 dist/
-*.egg-info/
+*.jsonl
+*.lock
 *.exe
 *.obj
 journal/
