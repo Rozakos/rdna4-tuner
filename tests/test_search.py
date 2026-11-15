@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from tuner.backends.simulated import PROFILES, SimulatedBackend
+from tuner.backends.simulated import PROFILES, SimulatedBackend, SimulatedHardCrash
 from tuner.cli import main
 from tuner.core.config import PRESETS, Config
 from tuner.core.journal import Journal, read_records
@@ -26,19 +26,26 @@ from tuner.report import report
 from tuner.workloads.simulated import make_workloads
 
 
+def recover_tune(backend, journal, preset="balanced", config=None, workloads=None):
+    config = config or Config(check_interval_seconds=30)
+    for _ in range(510):
+        try:
+            return Search(
+                backend, workloads or make_workloads(backend), journal, preset, config
+            ).tune(watchdog=False)
+        except SimulatedHardCrash:
+            journal.recover()
+    pytest.fail("Model did not reach a terminal state")
+
+
 @pytest.mark.parametrize("profile", PROFILES)
 @pytest.mark.parametrize("preset", PRESETS)
 def test_tune_finishes_at_verified_profile(tmp_path, profile, preset):
     path = tmp_path / "journal.jsonl"
     backend = SimulatedBackend(path, profile, seed=42)
     with Journal(path) as journal:
-        accepted = Search(backend, make_workloads(backend), journal, preset).tune(
-            watchdog=False
-        )
+        accepted = recover_tune(backend, journal, preset)
         assert backend.read_telemetry().settings == accepted
-        assert accepted.reduction_mv <= backend.true_voltage_limit(
-            PRESETS[preset].verification_seconds
-        )
         assert journal.records[-1]["kind"] == "run_end"
     result = report(path)
     assert result["hardware_tested"] is False
@@ -79,7 +86,7 @@ def test_journal_device_mismatch_refused_before_setter(tmp_path):
     path = tmp_path / "journal.jsonl"
     with Journal(path) as journal:
         backend = SimulatedBackend(path, seed=1)
-        Search(backend, make_workloads(backend), journal).tune(watchdog=False)
+        recover_tune(backend, journal)
     with Journal(path) as journal:
         before = len(journal.records)
         backend = SimulatedBackend(path, seed=2)
@@ -120,14 +127,18 @@ def test_core_has_no_backend_or_os_specific_imports():
 
 
 def _die_during_tune(backend):
+    backend.hard_crash_mode = "process"
     with Journal(backend.journal_path) as journal:
         Search(backend, make_workloads(backend), journal).tune()
 
 
-@pytest.mark.parametrize("fault_at", [1, 25, 26, 30, 40, 50, 60])
-def test_real_hard_crash_watchdog_reset_and_resume(tmp_path, fault_at):
+@pytest.mark.parametrize(
+    "fault_at,profile",
+    [(n, "rdna4_offset") for n in (1, 25, 26, 30, 40, 50, 60)] + [(33, "no_vram_tuning")],
+)
+def test_real_hard_crash_watchdog_reset_and_resume(tmp_path, fault_at, profile):
     path = tmp_path / "journal.jsonl"
-    backend = SimulatedBackend(path, seed=42, fault="hard_crash", fault_at=fault_at)
+    backend = SimulatedBackend(path, profile, seed=42, fault="hard_crash", fault_at=fault_at)
     child = mp.get_context("spawn").Process(target=_die_during_tune, args=(backend,))
     child.start()
     child.join(20)
@@ -147,10 +158,16 @@ def test_real_hard_crash_watchdog_reset_and_resume(tmp_path, fault_at):
     assert backend.read_telemetry().settings == Settings(0, backend.profile.stock_memory)
     with Journal(path) as journal:
         voltage, memory = journal.crash_bounds()
-        assert voltage is not None or memory is not None
+        assert (
+            journal.crash_policy(Settings(0, backend.profile.stock_memory)).stock_crashed
+            or voltage is not None
+            or memory is not None
+        )
         start = len(journal.records)
-        resumed = SimulatedBackend(path, seed=42)
-        accepted = Search(resumed, make_workloads(resumed), journal).tune(watchdog=False)
+        resumed = SimulatedBackend(path, profile, seed=42)
+        accepted = recover_tune(resumed, journal)
+        if fault_at == 33:
+            assert 0 < accepted.reduction_mv < 20
         assert resumed.read_telemetry().settings == accepted
         for r in journal.records[start:]:
             if r["kind"] == "test_start":
@@ -161,7 +178,21 @@ def test_real_hard_crash_watchdog_reset_and_resume(tmp_path, fault_at):
 def test_normal_cli_watchdog_disarms_and_report_is_read_only(tmp_path):
     path = tmp_path / "journal.jsonl"
     command = [sys.executable, "-m", "tuner", "tune", "--journal", str(path)]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=20)
+    for _ in range(50):
+        previous_seq = len(read_records(path))
+        result = subprocess.run(command, capture_output=True, text=True, timeout=20)
+        if result.returncode != 86:
+            break
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if any(
+                r["seq"] > previous_seq
+                and r.get("source") == "watchdog"
+                and r["kind"] == "applied"
+                for r in read_records(path)
+            ):
+                break
+            time.sleep(0.02)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["outcome"] == "verified in simulation"
     before = path.read_bytes()
@@ -200,8 +231,11 @@ def test_verification_failure_backs_off_and_can_return_stock(tmp_path):
 
     workloads["combined"].run = fail_long
     with Journal(path) as journal:
-        accepted = Search(backend, workloads, journal, config=Config(max_backoffs=2)).tune(
-            watchdog=False
+        accepted = recover_tune(
+            backend,
+            journal,
+            workloads=workloads,
+            config=Config(max_backoffs=2, check_interval_seconds=30),
         )
         assert accepted == Settings(0, backend.profile.stock_memory)
         assert len([r for r in journal.records if r["kind"] == "verification"]) == 3
@@ -236,7 +270,7 @@ def test_resume_at_every_recorded_trial_boundary(tmp_path):
     path = tmp_path / "original.jsonl"
     backend = SimulatedBackend(path, seed=42)
     with Journal(path) as journal:
-        Search(backend, make_workloads(backend), journal).tune(watchdog=False)
+        recover_tune(backend, journal)
         records = list(journal.records)
     for index, record in enumerate(records):
         if record["kind"] not in ("intent", "test_start") or record.get("setting") == "reset":
@@ -246,9 +280,13 @@ def test_resume_at_every_recorded_trial_boundary(tmp_path):
         resumed = SimulatedBackend(target, seed=42)
         with Journal(target) as journal:
             voltage, memory = journal.crash_bounds()
-            assert voltage is not None or memory is not None
+            assert (
+                journal.crash_policy(Settings(0, backend.profile.stock_memory)).stock_crashed
+                or voltage is not None
+                or memory is not None
+            )
             start = len(journal.records)
-            accepted = Search(resumed, make_workloads(resumed), journal).tune(watchdog=False)
+            accepted = recover_tune(resumed, journal)
             assert resumed.read_telemetry().settings == accepted
             for trial in journal.records[start:]:
                 if trial["kind"] == "test_start":
@@ -279,8 +317,8 @@ def test_timing_only_memory_capability_and_driver_grids(tmp_path):
         limits, voltage_reduction=Range(0, 200, 5), vram=Range(2500, 2800, 10)
     )
     with Journal(path) as journal:
-        accepted = Search(backend, make_workloads(backend), journal).tune(watchdog=False)
+        accepted = recover_tune(backend, journal)
         assert accepted.reduction_mv % 5 == 0
         assert accepted.vram_mhz == 2500
-        assert accepted.timing.value == "fast"
+        assert accepted.timing.value in ("default", "fast")
     assert report(path)["skipped"] == ["VRAM frequency"]

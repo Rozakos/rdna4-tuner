@@ -176,30 +176,30 @@ profile** (offset, absolute, no VRAM tuning):
 Gate M1 is **not passed yet**. Reviewed at `42423f0`: the structure is right, 62 tests pass
 and CI is green. The items below were found by running the code; fix them in order.
 
-- [ ] **R1 Crash during verification can lock the card at stock.** `crash_bounds()` turns a
+- [x] **R1 Crash during verification can lock the card at stock.** `crash_bounds()` turns a
       `profile` crash into a VRAM bound even when VRAM was at stock, so the next run says
       "previous stock test crashed" and returns stock for ever. Reproduce: `no_vram_tuning`,
       seed 42, hard crash on workload run 33. Rule: a crash never bounds a setting that was
       at its stock value. Test: after that crash the next run accepts a non-zero reduction
       below the crashed one.
-- [ ] **R2 Crash at true stock.** Keep refusing to tune, but say so: outcome
+- [x] **R2 Crash at true stock.** Keep refusing to tune, but say so: outcome
       `crash at stock settings`, a CLI message that explains it, and a documented way to
       start a new journal. Not a silent stock result.
-- [ ] **R3 Fast timing crash is forgotten.** After a crash with fast timing the next run
+- [x] **R3 Fast timing crash is forgotten.** After a crash with fast timing the next run
       tries fast timing again at a slightly lower frequency. Record timing in the crash
       bound and do not try fast timing again in that journal.
-- [ ] **R4 Timing trial spends the VRAM margin.** Fast timing is tried after the margin is
+- [x] **R4 Timing trial spends the VRAM margin.** Fast timing is tried after the margin is
       subtracted. With `balanced`, 779 of 1,000 cards end past the bandwidth knee (the
       error-correction zone). The margin must apply to the final frequency and timing pair.
-- [ ] **R5 Long runs are unsupervised.** `Supervisor.test` checks temperature, power and
+- [x] **R5 Long runs are unsupervised.** `Supervisor.test` checks temperature, power and
       crash events only after `run(seconds)` returns, so a 10-minute run has no check for
       10 minutes. Run in slices of `check_interval_seconds` (config), check between slices,
       stop at once on a breach. Test: a thermal fault injected mid-verification stops the
       run within one slice.
-- [ ] **R6 `accepted` means two things.** Short-test passes and the final verified profile
+- [x] **R6 `accepted` means two things.** Short-test passes and the final verified profile
       both write `accepted`. Write `passed` for trial passes and keep `accepted` for the
       final profile only, so a later `apply` can never pick up a short-test pass.
-- [ ] **R7 The simulator is too gentle to test verification.** Failure chance is one draw
+- [x] **R7 The simulator is too gentle to test verification.** Failure chance is one draw
       per run, almost independent of duration (at the burst edge: 0.51 for 8 s, 0.98 for
       600 s and for 1,800 s alike), and the edge moves by at most 2 mV. In all 12,000 sweep
       cards verification passed first time, so back-off was never exercised. Replace with a
@@ -222,10 +222,15 @@ and CI is green. The items below were found by running the code; fix them in ord
       margin, not one fine step, after a failed verification. **Do not retune the simulator
       to make the targets pass.** If a target is missed, put the measured numbers under
       "Open" and stop; the owner and Claude decide.
-- [ ] **R9 Small items.** Report verification time per workload (30 minutes is currently
+- [x] **R9 Small items.** Report verification time per workload (30 minutes is currently
       split three ways). Truncate a torn journal tail in place instead of rewriting the
       file. `stop_watchdog` in `finally` must not hide the original error. Add a simulated
       profile with `voltage_kind = none` and one with a 5 mV voltage step to the sweep.
+
+R8 remains open: balanced hourly-risk results are 89.5–89.9% on voltage-tunable profiles
+(target 90% each); no-voltage verification failure coverage is 0–0.2% (target >5% per
+profile). See CHANGELOG.md for the complete per-profile risk shares. No simulator or
+search retuning followed these misses. Functional CI success does not pass this gate.
 
 **STOP. Gate M1.1: Claude reviews.**
 

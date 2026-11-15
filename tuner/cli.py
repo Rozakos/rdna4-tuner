@@ -37,7 +37,14 @@ def main(argv=None):
     if args.command == "report":
         print(json.dumps(report(args.journal), indent=2))
         return 0
-    backend = SimulatedBackend(args.journal, args.profile, args.seed, args.fault, args.fault_at)
+    backend = SimulatedBackend(
+        args.journal,
+        args.profile,
+        args.seed,
+        args.fault,
+        args.fault_at,
+        hard_crash_mode="process",
+    )
     if args.command == "status" or args.dry_run:
         print(
             json.dumps(
@@ -60,7 +67,15 @@ def main(argv=None):
             Search(backend, make_workloads(backend), journal, args.preset).tune()
     except (RuntimeError, ValueError) as exc:
         parser.exit(1, f"{type(exc).__name__}: {exc}\n")
-    print(json.dumps(report(args.journal), indent=2))
+    result = report(args.journal)
+    print(json.dumps(result, indent=2))
+    if result["outcome"] == "crash at stock settings":
+        parser.exit(
+            2,
+            "A crash was recorded at true stock settings. Tuning is refused. "
+            "Investigate stock stability; to explicitly start over, choose a NEW "
+            "--journal path. Keep the old journal for diagnosis.\n",
+        )
     return 0
 
 

@@ -18,6 +18,7 @@ PRESETS = {
 
 @dataclass(frozen=True)
 class Config:
+    check_interval_seconds: float = 5  # Bound unattended exposure during any workload.
     baseline_runs: int = 5  # Repeated measurements estimate baseline variation.
     short_seconds: float = 8  # Edge discovery only; never a stability claim.
     coarse_step_mv: int = 20  # Bracket the voltage edge without excessive trials.

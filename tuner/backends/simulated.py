@@ -30,6 +30,7 @@ class Profile:
     vram: bool
     clocks: bool
     stock_memory: int
+    voltage_step: int = 1
 
 
 PROFILES = {
@@ -37,25 +38,42 @@ PROFILES = {
     "rdna2_absolute": Profile(VoltageKind.ABSOLUTE, 1200, True, True, 2000),
     "rdna3_absolute": Profile(VoltageKind.ABSOLUTE, 1150, True, True, 2400),
     "no_vram_tuning": Profile(VoltageKind.OFFSET, None, False, False, 2100),
+    "no_voltage_tuning": Profile(VoltageKind.NONE, None, True, False, 2100),
+    "voltage_step_5mv": Profile(VoltageKind.OFFSET, None, True, False, 2500, 5),
 }
+
+
+class SimulatedHardCrash(BaseException):
+    """The statistical harness must reopen/recover the journal, not treat this as a result."""
 
 
 class SimulatedBackend:
     """A deterministic synthetic card; shared settings allow a real child watchdog test."""
 
     def __init__(
-        self, journal_path: Path, profile="rdna4_offset", seed=0, fault=None, fault_at=1
+        self,
+        journal_path: Path,
+        profile="rdna4_offset",
+        seed=0,
+        fault=None,
+        fault_at=1,
+        hard_crash_mode="raise",
     ):
         self.journal_path = Path(journal_path)
         self.profile_name, self.profile = profile, PROFILES[profile]
         self.seed, self.rng = seed, random.Random(seed)
         self.fault, self.fault_at = fault, fault_at
+        self.hard_crash_mode = hard_crash_mode
         self.runs = 0
         self.events = []
         self.temperature = 45.0
         self.power_fault = False
         self.voltage_edge = self.rng.randrange(85, 151)
         self.memory_edge = self.profile.stock_memory + self.rng.randrange(90, 181)
+        # Frozen M1.1 model: independent per-card transition widths, 2–5 in each unit.
+        self.width_mv = self.rng.uniform(2, 5)
+        self.memory_width_mhz = self.rng.uniform(2, 5)
+        self.elapsed_seconds = 0.0
         ctx = mp.get_context("spawn")
         self.state = ctx.Array("i", [0, self.profile.stock_memory, 0, 0], lock=True)
 
@@ -73,7 +91,7 @@ class SimulatedBackend:
 
     def read_limits(self):
         return Limits(
-            Range(0, 200, 1),
+            Range(0, 200, self.profile.voltage_step),
             Range(self.profile.stock_memory, self.profile.stock_memory + 300, 1),
             self.profile.stock_memory,
             (Timing.DEFAULT, Timing.FAST),
@@ -107,6 +125,8 @@ class SimulatedBackend:
         self._guard("voltage", reduction_mv)
         if not self.read_limits().voltage_reduction.contains(reduction_mv):
             raise OutOfRange("Voltage reduction outside reported range")
+        if self.profile.kind == VoltageKind.NONE and reduction_mv:
+            raise Rejected("Voltage tuning unsupported")
         if self.fault == "rejected" and reduction_mv:
             raise Rejected("Injected setter rejection")
         if self.fault == "unavailable" and reduction_mv:
@@ -130,13 +150,34 @@ class SimulatedBackend:
         return [event for event in self.events if event.timestamp >= t]
 
     def true_voltage_limit(self, seconds, load="burst"):
-        # Bursts reveal a lower edge; sustained heating lowers it by up to two more mV.
-        burst = 6 if load in ("burst", "combined") else 0
-        heat = min(2, seconds / 300)
-        return self.voltage_edge - burst - heat
+        """Median failure point, not a safe limit; retained for older diagnostic callers."""
+        return self.load_edge(load) + self.width_mv * math.log(1800 / seconds)
+
+    def load_edge(self, load):
+        return self.voltage_edge - (6 if load in ("burst", "combined") else 0)
+
+    @staticmethod
+    def failure_rate(value, edge, width):
+        return math.log(2) / 1800 * math.exp((value - edge) / width)
+
+    def voltage_failure_probability(self, seconds=3600, load="burst", settings=None):
+        if self.profile.kind == VoltageKind.NONE:
+            return 0.0
+        settings = settings or self.read_telemetry().settings
+        rate = self.failure_rate(settings.reduction_mv, self.load_edge(load), self.width_mv)
+        return -math.expm1(-rate * seconds)
+
+    def memory_knee(self, timing):
+        return self.memory_edge - (15 if timing == Timing.FAST else 0)
+
+    def _hard_crash(self):
+        if self.hard_crash_mode == "process":
+            os._exit(86)
+        raise SimulatedHardCrash("Synthetic process death beyond edge + 3 widths")
 
     def exercise(self, name, seconds):
         self.runs += 1
+        self.elapsed_seconds += seconds
         if self.runs == self.fault_at:
             if self.fault == "hard_crash":
                 os._exit(86)
@@ -149,18 +190,28 @@ class SimulatedBackend:
                 self.power_fault = True
         settings = self.read_telemetry().settings
         if self.fault != "thermal":
-            self.temperature = 55 + min(25, seconds / 60) + self.rng.uniform(-0.5, 0.5)
-        edge = self.true_voltage_limit(seconds, name)
-        # A smooth probability curve near the edge, deterministic for a given seed.
-        chance = 1 / (1 + math.exp(max(-50, min(50, -(settings.reduction_mv - edge) * 2))))
+            self.temperature = (
+                55 + min(25, self.elapsed_seconds / 60) + self.rng.uniform(-0.5, 0.5)
+            )
+        edge = self.load_edge(name)
+        chance = self.voltage_failure_probability(seconds, name, settings)
         voltage_ok = self.rng.random() >= chance
         excess = (
             settings.vram_mhz - self.memory_edge + (15 if settings.timing == Timing.FAST else 0)
         )
-        memory_ok = excess <= 15
+        touches_memory = name in ("vram_bandwidth", "vram_verify", "combined")
+        # Preserve the original 15 MHz gap between the ECC knee and the data-error edge.
+        memory_rate = self.failure_rate(excess, 15, self.memory_width_mhz)
+        memory_ok = not touches_memory or self.rng.random() >= -math.expm1(
+            -memory_rate * seconds
+        )
+        if (not voltage_ok and settings.reduction_mv > edge + 3 * self.width_mv) or (
+            not memory_ok and excess > 15 + 3 * self.memory_width_mhz
+        ):
+            self._hard_crash()
         score = 1000.0
         noise = 2.0
-        if name in ("vram_bandwidth", "vram_verify", "combined"):
+        if touches_memory:
             gain = min(
                 settings.vram_mhz - self.profile.stock_memory,
                 self.memory_edge - self.profile.stock_memory,

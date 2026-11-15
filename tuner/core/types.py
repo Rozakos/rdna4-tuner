@@ -93,6 +93,14 @@ class Settings:
 
 
 @dataclass(frozen=True)
+class CrashBounds:
+    voltage: int | None = None
+    memory: int | None = None
+    timings: frozenset[Timing] = frozenset()
+    stock_crashed: bool = False
+
+
+@dataclass(frozen=True)
 class Telemetry:
     settings: Settings
     voltage_mv: int | None

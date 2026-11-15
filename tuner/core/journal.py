@@ -5,7 +5,7 @@ from pathlib import Path
 
 from filelock import FileLock, Timeout
 
-from .types import JournalBusy, JournalCorrupt, Settings
+from .types import CrashBounds, JournalBusy, JournalCorrupt, Settings, Timing
 
 
 def read_records(path: Path) -> list[dict]:
@@ -39,16 +39,15 @@ class Journal:
             raise JournalBusy("Another process owns this journal") from exc
         try:
             self.records = read_records(self.path)
-            # Remove only an incomplete tail, retaining every committed JSON record.
-            valid = b"".join(
-                (json.dumps(r, separators=(",", ":")) + "\n").encode() for r in self.records
-            )
             raw = self.path.read_bytes() if self.path.exists() else b""
             if raw and not raw.endswith(b"\n"):
-                complete = raw.splitlines(keepends=True)[: len(self.records)]
-                valid = b"".join(complete).rstrip(b"\n") + b"\n" if complete else b""
-                with self.path.open("wb") as stream:
-                    stream.write(valid)
+                lines = raw.splitlines(keepends=True)
+                offset = sum(len(line) for line in lines[: len(self.records)])
+                with self.path.open("r+b") as stream:
+                    stream.truncate(offset)
+                    stream.seek(offset)
+                    if offset and not raw[:offset].endswith(b"\n"):
+                        stream.write(b"\n")
                     stream.flush()
                     os.fsync(stream.fileno())
             self.stream = self.path.open("ab")
@@ -70,7 +69,7 @@ class Journal:
         for record in self.records:
             if record["kind"] in ("intent", "test_start"):
                 pending = record
-            elif record["kind"] in ("test_result", "accepted", "rejected", "run_end"):
+            elif record["kind"] in ("test_result", "passed", "accepted", "rejected", "run_end"):
                 pending = None
             elif record["kind"] == "applied" and pending and pending.get("setting") == "reset":
                 pending = None
@@ -80,32 +79,71 @@ class Journal:
                 reason="crash",
                 setting=pending.get("setting", "profile"),
                 value=pending.get("value", pending.get("settings")),
+                settings=pending.get("settings"),
                 recovered_seq=pending["seq"],
             )
 
-    def crash_bounds(self) -> tuple[int | None, int | None]:
-        voltage, memory = [], []
+    def crash_policy(self, stock: Settings) -> CrashBounds:
+        voltage, memory, timings = [], [], set()
+        stock_crashed = False
         for r in self.records:
             if r["kind"] != "rejected" or r.get("reason") != "crash":
                 continue
             setting, value = r.get("setting"), r.get("value")
+            settings = r.get("settings")
+            if setting == "profile" and value:
+                settings = value
+            if settings:
+                stock_crashed |= Settings.from_dict(settings) == stock
+                if settings["timing"] != stock.timing:
+                    timings.add(Timing(settings["timing"]))
             if setting == "voltage":
-                voltage.append(value)
+                if value > stock.reduction_mv:
+                    voltage.append(value)
+                elif settings is None:
+                    stock_crashed = True
             elif setting == "vram":
-                memory.append(value["mhz"])
+                if value["mhz"] > stock.vram_mhz:
+                    memory.append(value["mhz"])
+                if value["timing"] != stock.timing:
+                    timings.add(Timing(value["timing"]))
             elif setting == "profile" and value:
-                voltage.append(value["reduction_mv"])
-                memory.append(value["vram_mhz"])
-        return min(voltage, default=None), min(memory, default=None)
+                if value["reduction_mv"] > stock.reduction_mv:
+                    voltage.append(value["reduction_mv"])
+                if value["vram_mhz"] > stock.vram_mhz:
+                    memory.append(value["vram_mhz"])
+        return CrashBounds(
+            min(voltage, default=None),
+            min(memory, default=None),
+            frozenset(timings),
+            stock_crashed,
+        )
 
-    def last_accepted(self) -> Settings | None:
+    def crash_bounds(self) -> tuple[int | None, int | None]:
+        start = next((r for r in self.records if r["kind"] == "run_start"), None)
+        memory = start["identity"]["limits"]["stock_vram_mhz"] if start else 0
+        bounds = self.crash_policy(Settings(0, memory))
+        return bounds.voltage, bounds.memory
+
+    def last_passed(self) -> Settings | None:
         for r in reversed(self.records):
-            if r["kind"] == "accepted":
+            if r["kind"] == "passed":
                 return Settings.from_dict(r["settings"])
         return None
 
-    def accepted(self, settings: Settings) -> None:
-        self.append("accepted", settings=asdict(settings))
+    def last_accepted(self) -> Settings | None:
+        for r in reversed(self.records):
+            if r["kind"] == "accepted" and r.get("verified"):
+                return Settings.from_dict(r["settings"])
+        return None
+
+    def accepted(self, settings: Settings, verification_seq: int) -> None:
+        self.append(
+            "accepted",
+            settings=asdict(settings),
+            verified=True,
+            verification_seq=verification_seq,
+        )
 
     def close(self) -> None:
         self.stream.close()

@@ -11,7 +11,7 @@ Windows first, Linux later.
 
 The name is historical: the project started with RDNA 4 only.
 
-**Status: M0–M1 implemented; review gate M1. Simulated hardware only.**
+**Status: M1.1 review fixes; simulator only. Gate M1 did not pass review.**
 
 ## Try the simulator
 
@@ -23,14 +23,22 @@ python -m tuner status --backend simulated
 python -m tuner tune --backend simulated --dry-run
 ```
 
-Profiles: `rdna4_offset`, `rdna2_absolute`, `rdna3_absolute`, `no_vram_tuning`.
+Profiles: `rdna4_offset`, `rdna2_absolute`, `rdna3_absolute`, `no_vram_tuning`,
+`no_voltage_tuning`, `voltage_step_5mv`.
 Use a separate `--journal` path for each card/profile/seed. Repeating a tune with the same
 journal recovers interrupted trials and excludes crashed values and more aggressive ones.
+Stock-valued knobs never create a tuning bound. A crash with fast memory timing blocks
+fast timing for that entire journal. Trial passes use `passed`; only a fully verified
+final profile uses `accepted`. Legacy M1 `accepted` records lack that proof and are not
+eligible final profiles.
 `--dry-run` reads synthetic capabilities without setters or journal writes. `status`
 describes a fresh simulator instance and, when present, the saved result separately.
 
-The report contains margins, tested settings and synthetic durations, skipped features and
-failures. A simulated 30-minute verification advances a model; it does **not** spend 30
+The supervisor checks every five seconds by default, stopping at the first unsafe slice.
+Verification durations are **per workload**, not divided between workloads: safe/balanced
+request 30 minutes each, edge requests 10 minutes each. Reports include each workload's
+requested and actual seconds, slice count, margins, settings, skips and failures.
+A simulated 30-minute verification advances a model; it does **not** spend 30
 minutes stressing or establish stability of a physical GPU. No real backend, stress load,
 ADLX bridge, boot task, apply/undo command or persistent setting is available at this gate.
 
@@ -42,13 +50,52 @@ ruff format --check .
 pytest -q
 ```
 
-The statistical sweep tests 1,000 seeds for each of three presets and each of four profiles
-(12,000 cards), requiring at least 99.5% below the model's long-duration voltage limit and
-90% within the specified margin plus two fine steps. It uses an in-memory journal double
-and asserts intent-before-setter in the simulated backend. Filesystem durability, fsync
+The statistical and durability tests are separate. The M1.1 sweep and provisional targets
+are described below. It uses an in-memory journal double and asserts intent-before-setter
+in the simulated backend. Filesystem durability, fsync
 ordering, exclusive ownership, interrupted writes, process death and watchdog resets are
 tested separately with actual files and child processes. No simulator metric proves real
 GPU stability. M2 requires a separate owner-authorized milestone after review.
+
+## Frozen M1.1 model and review gate
+
+The original M1 statistics were insufficient: short and long tests were almost equally
+demanding. M1.1 uses the review's fixed voltage failure rate:
+
+```text
+rate(v) = ln(2) / 1800 * exp((v - edge) / w)
+P(failure over t seconds) = 1 - exp(-rate(v) * t)
+```
+
+Each seeded card draws `w` uniformly from 2–5 mV. Burst/combined edge is 6 mV below core.
+Memory uses the same law with an independent 2–5 MHz width; the old model's 15 MHz gap
+from the ECC knee to its data-error edge is retained. Fast timing lowers both by 15 MHz.
+A failure beyond its error edge plus three widths is process death. The CLI exits and
+its watchdog resets; the statistical harness raises a sentinel, reopens/replays the
+journal and resumes. Coefficients are a fixed **unmeasured review fixture**, not Radeon
+calibration. They must not be adjusted to improve acceptance results.
+
+The sweep now covers 18,000 cards (1,000 per preset and each of six profiles), including
+crash-resume. It reports hourly burst risk, timing-adjusted knee/margin accuracy,
+verification failures and hard deaths per group. It uses 300-second statistical slices
+under the same exponential exposure law; the CLI's five-second transient monitoring is
+tested separately. The log double retains production crash-policy/recovery code.
+Metrics are emitted in CI and written to ignored `reports/acceptance.json`.
+
+Provisional targets are defined in `PLAN.md` R8. A numerical miss appears as XFAIL with
+its measured values, is recorded under Open in the changelog, and leaves the gate closed.
+Passing functional CI does not override a missed numerical gate. Do not start M2 until
+the owner and reviewer approve M1.1.
+
+## A crash at true stock
+
+The CLI refuses tuning with outcome `crash at stock settings` and exit code 2; repeating
+the same journal does not clear the refusal. Investigate the crash first. To explicitly
+start over, choose a **new** journal path; retain the old one for diagnosis:
+
+```text
+python -m tuner tune --backend simulated --profile no_vram_tuning --seed 42 --journal journal/new-attempt-42.jsonl
+```
 
 The aim is a profile that survives real gaming, not a three-minute benchmark:
 

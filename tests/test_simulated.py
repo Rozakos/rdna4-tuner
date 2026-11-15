@@ -1,6 +1,6 @@
 import pytest
 
-from tuner.backends.simulated import PROFILES, SimulatedBackend
+from tuner.backends.simulated import PROFILES, SimulatedBackend, SimulatedHardCrash
 from tuner.core.journal import Journal
 from tuner.core.types import OutOfRange, Rejected, Timing, VoltageKind
 from tuner.workloads.simulated import make_workloads
@@ -14,9 +14,13 @@ def test_capabilities_readback_limits_and_seeded_workload(tmp_path, profile):
         clone = SimulatedBackend(path, profile, seed=4)
         assert backend.exercise("core", 8) == clone.exercise("core", 8)
         journal.append("intent", setting="voltage", value=50)
-        backend.set_voltage(50)
-        assert backend.read_telemetry().settings.reduction_mv == 50
         caps = backend.read_capabilities()
+        if caps.voltage_kind == VoltageKind.NONE:
+            with pytest.raises(Rejected):
+                backend.set_voltage(50)
+        else:
+            backend.set_voltage(50)
+            assert backend.read_telemetry().settings.reduction_mv == 50
         if caps.voltage_kind == VoltageKind.ABSOLUTE:
             assert backend.read_telemetry().voltage_mv == caps.stock_voltage_mv - 50
         journal.append("intent", setting="vram", value={"mhz": 2200, "timing": "default"})
@@ -49,9 +53,8 @@ def test_bursts_heat_and_memory_errors_are_modelled(tmp_path):
         memory = backend.memory_edge + 40
         journal.append("intent", setting="vram", value={"mhz": memory, "timing": "default"})
         backend.set_vram(memory, Timing.DEFAULT)
-        result = make_workloads(backend)["vram_verify"].run(30)
-        assert not result.ok
-        assert result.noise > 2
+        with pytest.raises(SimulatedHardCrash):
+            make_workloads(backend)["vram_verify"].run(30)
 
 
 @pytest.mark.parametrize("fault", ["rejected", "unavailable", "readback", "driver_reset"])

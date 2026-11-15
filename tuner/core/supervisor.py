@@ -1,6 +1,6 @@
 import math
 import multiprocessing as mp
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 
 from .config import DEFAULT_CONFIG
@@ -12,6 +12,7 @@ from .types import (
     Settings,
     Timing,
     VoltageKind,
+    WorkloadResult,
 )
 
 
@@ -73,7 +74,15 @@ class Supervisor:
             self.watchdog = self.connection = None
 
     def _change(self, setting, value, setter, check):
-        self.journal.append("intent", setting=setting, value=value)
+        current = self.backend.read_telemetry().settings
+        desired = (
+            Settings(0, self.limits.stock_vram_mhz)
+            if setting == "reset"
+            else replace(current, reduction_mv=value)
+            if setting == "voltage"
+            else replace(current, vram_mhz=value["mhz"], timing=Timing(value["timing"]))
+        )
+        self.journal.append("intent", setting=setting, value=value, settings=asdict(desired))
         setter()
         if not check(self.backend.read_telemetry().settings):
             raise ReadbackMismatch(f"{setting} did not read back as requested")
@@ -114,25 +123,7 @@ class Supervisor:
                 lambda s: (s.vram_mhz, s.timing) == (settings.vram_mhz, settings.timing),
             )
 
-    def test(self, workload, seconds, baseline=None, risk="profile"):
-        settings = self.backend.read_telemetry().settings
-        start = datetime.now(UTC)
-        value = (
-            settings.reduction_mv
-            if risk == "voltage"
-            else {"mhz": settings.vram_mhz, "timing": settings.timing}
-            if risk == "vram"
-            else asdict(settings)
-        )
-        self.journal.append(
-            "test_start",
-            setting=risk,
-            value=value,
-            settings=asdict(settings),
-            workload=workload.name,
-            seconds=seconds,
-        )
-        result = workload.run(seconds)
+    def _reasons(self, result, settings, start, baseline):
         telemetry = self.backend.read_telemetry()
         reasons = []
         if not result.ok:
@@ -157,13 +148,50 @@ class Supervisor:
                 reasons.append("score below baseline noise allowance")
             if result.noise > baseline["noise"] * self.config.noise_multiplier:
                 reasons.append("noise above baseline allowance")
+        return reasons
+
+    def test(self, workload, seconds, baseline=None, risk="profile"):
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError("Workload duration must be positive and finite")
+        settings = self.backend.read_telemetry().settings
+        start = datetime.now(UTC)
+        value = (
+            settings.reduction_mv
+            if risk == "voltage"
+            else {"mhz": settings.vram_mhz, "timing": settings.timing}
+            if risk == "vram"
+            else asdict(settings)
+        )
+        self.journal.append(
+            "test_start",
+            setting=risk,
+            value=value,
+            settings=asdict(settings),
+            workload=workload.name,
+            seconds=seconds,
+        )
+        elapsed, weighted_score, noise, slices = 0.0, 0.0, 0.0, 0
+        reasons = []
+        while elapsed < seconds:
+            duration = min(self.config.check_interval_seconds, seconds - elapsed)
+            result = workload.run(duration)
+            elapsed += duration
+            slices += 1
+            weighted_score += result.score * duration
+            noise = max(noise, result.noise)
+            reasons = self._reasons(result, settings, start, baseline)
+            if reasons:
+                break
+        score = weighted_score / elapsed
         self.journal.append(
             "test_result",
             workload=workload.name,
-            seconds=seconds,
+            seconds=elapsed,
+            requested_seconds=seconds,
+            slices=slices,
             settings=asdict(settings),
-            score=result.score if math.isfinite(result.score) else None,
-            noise=result.noise if math.isfinite(result.noise) else None,
+            score=score if math.isfinite(score) else None,
+            noise=noise if math.isfinite(noise) else None,
             ok=not reasons,
             reasons=reasons,
         )
@@ -175,4 +203,4 @@ class Supervisor:
         }
         if unsafe.intersection(reasons):
             raise SafetyLimitExceeded("; ".join(reasons))
-        return not reasons, result
+        return not reasons, WorkloadResult(score, noise, not reasons, "; ".join(reasons))
