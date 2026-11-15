@@ -29,3 +29,6 @@ class Config:
     relative_noise_floor: float = 0.002  # Avoid zero-noise baselines implying exact scores.
     max_backoffs: int = 8  # Bound failed full-verification attempts.
     watchdog_join_seconds: float = 10  # Bound normal shutdown of the watchdog.
+
+
+DEFAULT_CONFIG = Config()

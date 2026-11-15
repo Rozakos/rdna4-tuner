@@ -27,6 +27,10 @@ class PermissionDenied(BackendError):
     pass
 
 
+class SafetyLimitExceeded(BackendError):
+    pass
+
+
 class JournalBusy(RuntimeError):
     pass
 

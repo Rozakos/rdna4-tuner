@@ -53,6 +53,7 @@ class SimulatedBackend:
         self.runs = 0
         self.events = []
         self.temperature = 45.0
+        self.power_fault = False
         self.voltage_edge = self.rng.randrange(85, 151)
         self.memory_edge = self.profile.stock_memory + self.rng.randrange(90, 181)
         ctx = mp.get_context("spawn")
@@ -67,7 +68,7 @@ class SimulatedBackend:
             p.vram,
             p.vram,
             self.profile_name,
-            "Simulated " + self.profile_name,
+            f"Simulated {self.profile_name} seed {self.seed}",
         )
 
     def read_limits(self):
@@ -86,7 +87,10 @@ class SimulatedBackend:
         voltage = (
             None if self.profile.voltage_mv is None else self.profile.voltage_mv - reduction
         )
-        return Telemetry(settings, voltage, 2400, 220 - reduction * 0.2, self.temperature)
+        power = (
+            self.read_limits().max_power_w + 1 if self.power_fault else 220 - reduction * 0.2
+        )
+        return Telemetry(settings, voltage, 2400, power, self.temperature)
 
     def _guard(self, setting, value):
         # Read only the durable final record, rather than repeatedly parsing the whole log.
@@ -137,11 +141,12 @@ class SimulatedBackend:
             if self.fault == "hard_crash":
                 os._exit(86)
             if self.fault == "driver_reset":
+                self.state[0], self.state[1], self.state[2] = 0, self.profile.stock_memory, 0
                 self.events.append(CrashEvent(datetime.now(UTC), "Injected driver reset"))
             if self.fault == "thermal":
                 self.temperature = self.read_limits().max_temperature_c + 1
             if self.fault == "power":
-                return WorkloadResult(1000, 2, False, "Injected power fault")
+                self.power_fault = True
         settings = self.read_telemetry().settings
         if self.fault != "thermal":
             self.temperature = 55 + min(25, seconds / 60) + self.rng.uniform(-0.5, 0.5)

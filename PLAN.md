@@ -140,23 +140,23 @@ it and resets the card.
 ## 5. Milestones
 
 ### M0 — Skeleton (no hardware)
-- [ ] Package layout, `pyproject.toml`, ruff and pytest configured, `THIRD_PARTY.md`.
-- [ ] GitHub Actions: lint, format check and tests on Windows and Linux.
-- [ ] `types.py`, `config.py`, `Backend` and `Workload` protocols, typed errors.
-- [ ] Journal with crash-recovery reader. Tests: truncated last line, unfinished intent,
+- [x] Package layout, `pyproject.toml`, ruff and pytest configured, `THIRD_PARTY.md`.
+- [x] GitHub Actions: lint, format check and tests on Windows and Linux.
+- [x] `types.py`, `config.py`, `Backend` and `Workload` protocols, typed errors.
+- [x] Journal with crash-recovery reader. Tests: truncated last line, unfinished intent,
       unfinished test, concurrent open refused.
-- [ ] Simulated backend and workloads as in 4.5, with tests for each behaviour.
+- [x] Simulated backend and workloads as in 4.5, with tests for each behaviour.
 
 Done when CI is green on both systems and the journal tests include a real process kill
 (a child process killed mid-write, then recovered by the parent).
 
 ### M1 — Search and safety against the simulator (no hardware)
-- [ ] Baseline measurement with noise estimate.
-- [ ] Coarse, bisect, margin and verification stages; presets.
-- [ ] Supervisor: limits, crash events, watchdog child that resets the backend.
-- [ ] Crash-resume: a simulated hard crash at any step resumes correctly.
-- [ ] `cli.py tune --backend simulated`, `status`, `report`, `--dry-run`.
-- [ ] Report: values, margins, what was tested and for how long, every failure seen.
+- [x] Baseline measurement with noise estimate.
+- [x] Coarse, bisect, margin and verification stages; presets.
+- [x] Supervisor: limits, crash events, watchdog child that resets the backend.
+- [x] Crash-resume: a simulated hard crash at any step resumes correctly.
+- [x] `cli.py tune --backend simulated`, `status`, `report`, `--dry-run`.
+- [x] Report: values, margins, what was tested and for how long, every failure seen.
 
 Acceptance, as tests over 1,000 seeded simulated cards per preset **and per simulated
 profile** (offset, absolute, no VRAM tuning):

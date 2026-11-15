@@ -29,12 +29,12 @@ def read_records(path: Path) -> list[dict]:
 
 
 class Journal:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, lock_timeout: float = 0):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = FileLock(str(self.path) + ".lock")
         try:
-            self.lock.acquire(timeout=0)
+            self.lock.acquire(timeout=lock_timeout)
         except Timeout as exc:
             raise JournalBusy("Another process owns this journal") from exc
         try:
