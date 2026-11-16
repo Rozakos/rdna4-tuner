@@ -3,6 +3,21 @@
 One entry per milestone, at most 15 lines: what changed, what was verified and how, what
 could not be verified.
 
+## 2026-11-16 — M1.2 crash and verification changes; gate NOT passed
+- S1–S2: margin-clearance crash caps, passed/crashed bisection, smaller coarse steps and 60-second refinement.
+- S3–S4: attribute backoffs to one knob; memory first for ambiguous combined failure; 60/300-second verification ramps.
+- Passing verification still runs every workload for its full preset duration; simulator coefficients are unchanged.
+- S6: report recovered hard deaths and all-run completed test time, with honest bounds for interrupted exposure.
+- Verified lint/format and 79 functional tests, including process death, all trial interruptions, attribution and full durations.
+- S5: full 18,000-card sweep; nine groups pass, nine fail firm numerical assertions; no XFAIL suppression.
+- Recovered 22,717 hard deaths; every group meets mean <=2.5 and p90 <=4 (observed maxima 2.198 and 3).
+- All memory groups: 100% below knee, 98.7–100% within margin; all time p90s meet the seven-hour limit.
+- Safe risk shares RDNA4/RDNA2/RDNA3/no-VRAM/no-voltage/5mV: 99.2/99.2/99.2/99.3/100/99.5%.
+- Open S5 time: safe VRAM medians 4.0817–4.0822h and balanced 4.4461–4.4517h exceed 4h (no-voltage 1.92h passes).
+- Open R8 risk: balanced voltage-tunable shares 89.9/89.9/89.9/88.8/89.7% remain below 90%; no-voltage is 100%.
+- Coverage passes on all required profiles; no-voltage exemption applied only to coverage. Edge risk is report-only.
+- STOP at M1.2 for Claude review; no retuning after misses, no hardware or M2 work. CI numerical gate remains red.
+
 ## 2026-11-15 — M1.1 review fixes; gate NOT passed
 - R1–R3: stock knobs no longer bound tuning; true-stock crashes refuse explicitly; crashed fast timing stays blocked.
 - R4: search each memory timing separately and margin the chosen pair; voltage verification precedes its margin.

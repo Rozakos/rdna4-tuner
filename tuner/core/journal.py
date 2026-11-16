@@ -131,6 +131,21 @@ class Journal:
                 return Settings.from_dict(r["settings"])
         return None
 
+    def passed_below(
+        self, setting: str, maximum: int, timing: Timing = Timing.DEFAULT
+    ) -> int | None:
+        """Latest passed lower bracket on this knob, not a final verified profile."""
+        for record in reversed(self.records):
+            if record["kind"] != "passed":
+                continue
+            settings = record["settings"]
+            if setting == "vram" and settings["timing"] != timing:
+                continue
+            value = settings["reduction_mv" if setting == "voltage" else "vram_mhz"]
+            if value <= maximum:
+                return value
+        return None
+
     def last_accepted(self) -> Settings | None:
         for r in reversed(self.records):
             if r["kind"] == "accepted" and r.get("verified"):

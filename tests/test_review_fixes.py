@@ -119,7 +119,12 @@ def test_mid_verification_thermal_fault_stops_within_one_slice(tmp_path):
 
     workloads["combined"].run = thermal
     with Journal(path) as journal:
-        search = Search(backend, workloads, journal, config=Config(check_interval_seconds=5))
+        search = Search(
+            backend,
+            workloads,
+            journal,
+            config=Config(check_interval_seconds=5, verification_ramp_seconds=()),
+        )
         search.baselines = {"combined": {"score": 1000, "noise": 2}}
         with pytest.raises(SafetyLimitExceeded, match="temperature"):
             search.verify(search.stock, ["combined"], 0, "final")

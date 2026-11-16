@@ -11,7 +11,7 @@ Windows first, Linux later.
 
 The name is historical: the project started with RDNA 4 only.
 
-**Status: M1.1 review fixes; simulator only. Gate M1 did not pass review.**
+**Status: M1.2 implemented; simulator only. Numerical gate NOT passed.**
 
 ## Try the simulator
 
@@ -31,6 +31,10 @@ Stock-valued knobs never create a tuning bound. A crash with fast memory timing 
 fast timing for that entire journal. Trial passes use `passed`; only a fully verified
 final profile uses `accepted`. Legacy M1 `accepted` records lack that proof and are not
 eligible final profiles.
+Recovery caps each tuned knob at least one preset margin below its crashed value and
+bisects from a recorded passed value. Coarse probes use smaller steps; refinement uses
+60-second tests. Final memory failures reduce memory only; ambiguous combined failures
+reduce memory first, while core/burst failures reduce voltage.
 `--dry-run` reads synthetic capabilities without setters or journal writes. `status`
 describes a fresh simulator instance and, when present, the saved result separately.
 
@@ -38,6 +42,10 @@ The supervisor checks every five seconds by default, stopping at the first unsaf
 Verification durations are **per workload**, not divided between workloads: safe/balanced
 request 30 minutes each, edge requests 10 minutes each. Reports include each workload's
 requested and actual seconds, slice count, margins, settings, skips and failures.
+Verification first runs 60- and 300-second probes; passing candidates still complete
+every full workload duration. Reports count recovered hard deaths and sum completed
+test seconds across all runs in the journal. Interrupted tests contribute an exposure
+range, from zero to their requested duration, because exact time at process death is unknown.
 A simulated 30-minute verification advances a model; it does **not** spend 30
 minutes stressing or establish stability of a physical GPU. No real backend, stress load,
 ADLX bridge, boot task, apply/undo command or persistent setting is available at this gate.
@@ -50,7 +58,7 @@ ruff format --check .
 pytest -q
 ```
 
-The statistical and durability tests are separate. The M1.1 sweep and provisional targets
+The statistical and durability tests are separate. The M1.2 sweep and provisional targets
 are described below. It uses an in-memory journal double and asserts intent-before-setter
 in the simulated backend. Filesystem durability, fsync
 ordering, exclusive ownership, interrupted writes, process death and watchdog resets are
@@ -77,15 +85,19 @@ calibration. They must not be adjusted to improve acceptance results.
 
 The sweep now covers 18,000 cards (1,000 per preset and each of six profiles), including
 crash-resume. It reports hourly burst risk, timing-adjusted knee/margin accuracy,
-verification failures and hard deaths per group. It uses 300-second statistical slices
+verification failures, hard deaths (mean/p90/max) and total synthetic hours
+(median/p90/max) per group. It uses 300-second statistical slices
 under the same exponential exposure law; the CLI's five-second transient monitoring is
 tested separately. The log double retains production crash-policy/recovery code.
 Metrics are emitted in CI and written to ignored `reports/acceptance.json`.
 
-Provisional targets are defined in `PLAN.md` R8. A numerical miss appears as XFAIL with
-its measured values, is recorded under Open in the changelog, and leaves the gate closed.
-Passing functional CI does not override a missed numerical gate. Do not start M2 until
-the owner and reviewer approve M1.1.
+Provisional targets are defined in `PLAN.md` R8 and S5. Every target uses a firm assertion;
+numerical misses fail pytest and CI, are recorded under Open in the changelog, and leave
+the gate closed. The no-voltage profile is exempt only from verification-failure coverage.
+The M1.2 18,000-card sweep meets crash-count targets in every group, but safe/balanced
+VRAM tune medians reach 4.082/4.452 hours (limit 4), and balanced voltage-tunable
+hourly-risk shares are 88.8–89.9% (target 90%). No model retuning followed these misses.
+Do not start M2 until the owner and reviewer approve the gate.
 
 ## A crash at true stock
 

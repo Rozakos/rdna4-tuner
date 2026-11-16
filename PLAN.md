@@ -248,18 +248,18 @@ passed**, for two things the new model exposed. Measured on 300 cards per preset
 On a real card every hard crash is a frozen or rebooted PC. Fewer than 4 % of cards tune
 without one.
 
-- [ ] **S1 A crash must move the search down by more than 1 mV.** After a crash at `v` the
+- [x] **S1 A crash must move the search down by more than 1 mV.** After a crash at `v` the
       cap is `v - 1`, the coarse step jumps straight back to it, and it crashes again:
       seed 42 on `no_vram_tuning` crashes at 120, 119, 118, 117, 116, 115 in a row. Treat a
       crash as a failed test in the bisection: resume between the last passed value and the
       crashed one, never within one preset margin of a crashed value. Same for VRAM.
-- [ ] **S2 Approach the edge so that a failure is usually a failed test, not a crash.** For
+- [x] **S2 Approach the edge so that a failure is usually a failed test, not a crash.** For
       example a smaller coarse step, or longer tests as the steps get smaller. Your choice;
       short tests are cheap and crashes are not.
-- [ ] **S3 Do not lower voltage for a memory failure.** In the final phase every failed
+- [x] **S3 Do not lower voltage for a memory failure.** In the final phase every failed
       round takes a margin off voltage and VRAM together. Lower only what failed; when that
       is unclear, lower VRAM first, because voltage already passed its own verification.
-- [ ] **S4 Cut wasted verification time** without shortening a passing verification. The
+- [x] **S4 Cut wasted verification time** without shortening a passing verification. The
       first verification starts at the 8-second edge, where a 30-minute run is almost sure
       to fail. Step the test length up (for example 8 s, 60 s, 300 s) before the full run.
 - [ ] **S5 Acceptance additions**, same sweep, firm assertions:
@@ -271,7 +271,13 @@ without one.
       - print crashes and hours per profile and preset next to the other numbers.
       Replace `pytest.xfail` with real assertions for every target that is met. As before:
       no simulator retuning; if a target is missed, report the numbers under "Open" and stop.
-- [ ] **S6 Report** the number of hard crashes recovered from and the total test time.
+- [x] **S6 Report** the number of hard crashes recovered from and the total test time.
+
+Measured on 18,000 cards: crash mean/p90 targets pass in all groups (max mean 2.198,
+max p90 3). S5 remains open: safe VRAM medians reach 4.082 hours and balanced 4.452
+hours, exceeding 4; balanced voltage-tunable hourly-risk shares are 88.8–89.9%, below
+90%. Memory targets and all p90 time targets pass. Numerical assertions remain firm;
+the frozen model is unchanged. See CHANGELOG.md Open items. Stop without retuning.
 
 **STOP. Gate M1.2: Claude reviews.**
 

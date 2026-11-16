@@ -167,7 +167,10 @@ def test_real_hard_crash_watchdog_reset_and_resume(tmp_path, fault_at, profile):
         resumed = SimulatedBackend(path, profile, seed=42)
         accepted = recover_tune(resumed, journal)
         if fault_at == 33:
-            assert 0 < accepted.reduction_mv < 20
+            # Smaller M1.2 probes put this injected crash at 5 mV. A full
+            # crash-clearance margin then permits stock only, not a false stock-crash lock.
+            assert accepted.reduction_mv == 0
+            assert journal.records[-1]["outcome"] == "verified in simulation"
         assert resumed.read_telemetry().settings == accepted
         for r in journal.records[start:]:
             if r["kind"] == "test_start":
@@ -238,7 +241,11 @@ def test_verification_failure_backs_off_and_can_return_stock(tmp_path):
             config=Config(max_backoffs=2, check_interval_seconds=30),
         )
         assert accepted == Settings(0, backend.profile.stock_memory)
-        assert len([r for r in journal.records if r["kind"] == "verification"]) == 3
+        assert {r["attempt"] for r in journal.records if r["kind"] == "verification"} == {
+            0,
+            1,
+            2,
+        }
 
 
 def test_all_setters_follow_fsync(tmp_path, monkeypatch):
@@ -280,10 +287,11 @@ def test_resume_at_every_recorded_trial_boundary(tmp_path):
         resumed = SimulatedBackend(target, seed=42)
         with Journal(target) as journal:
             voltage, memory = journal.crash_bounds()
-            assert (
-                journal.crash_policy(Settings(0, backend.profile.stock_memory)).stock_crashed
-                or voltage is not None
-                or memory is not None
+            # An interrupted setter moving a knob back to stock need not add a
+            # numeric bound, but the interruption itself must still be recovered.
+            assert any(
+                r["kind"] == "rejected" and r.get("recovered_seq") == record["seq"]
+                for r in journal.records
             )
             start = len(journal.records)
             accepted = recover_tune(resumed, journal)

@@ -21,10 +21,12 @@ class Config:
     check_interval_seconds: float = 5  # Bound unattended exposure during any workload.
     baseline_runs: int = 5  # Repeated measurements estimate baseline variation.
     short_seconds: float = 8  # Edge discovery only; never a stability claim.
-    coarse_step_mv: int = 20  # Bracket the voltage edge without excessive trials.
+    coarse_step_mv: int = 5  # Smaller discovery jumps reduce overshoot into hard crashes.
     fine_step_mv: int = 2  # Requested search resolution, rounded to driver steps.
-    coarse_step_mhz: int = 40  # Bracket the memory edge.
+    coarse_step_mhz: int = 10  # Observe bandwidth/noise before overshooting the memory knee.
     fine_step_mhz: int = 5  # Memory search resolution, rounded to driver steps.
+    refine_seconds: float = 60  # Give close bisection probes more exposure than discovery.
+    verification_ramp_seconds: tuple[float, ...] = (60, 300)  # Reject poor candidates cheaply.
     k_sigma: float = 4  # Reject score loss relative to baseline noise.
     noise_multiplier: float = 4  # Catch rising memory noise even while bandwidth rises.
     relative_noise_floor: float = 0.002  # Avoid zero-noise baselines implying exact scores.

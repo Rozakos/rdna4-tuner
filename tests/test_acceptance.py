@@ -1,4 +1,6 @@
 import json
+import math
+import statistics
 from pathlib import Path
 
 import pytest
@@ -52,10 +54,12 @@ RESULTS = []
 @pytest.mark.parametrize("preset", PRESETS)
 def test_1000_seeded_cards_per_profile_and_preset(tmp_path, profile, preset):
     safe = accepted_count = memory_safe = memory_close = verification_failures = crashes = 0
+    crash_counts, hours = [], []
     # Same exponential exposure law; 300 s slices keep this sweep practical.
     # CLI defaults to 5 s; transient fault tests exercise that interval separately.
     config = Config(check_interval_seconds=300)
     for seed in range(1000):
+        card_crashes = 0
         path = tmp_path / f"{seed}.jsonl"
         backend = SweepBackend(path, profile, seed)
         records = []
@@ -77,6 +81,7 @@ def test_1000_seeded_cards_per_profile_and_preset(tmp_path, profile, preset):
                 )
             except SimulatedHardCrash:
                 crashes += 1
+                card_crashes += 1
                 records = journal.records
             else:
                 break
@@ -85,19 +90,27 @@ def test_1000_seeded_cards_per_profile_and_preset(tmp_path, profile, preset):
                     if r["kind"] == "test_start":
                         assert (
                             bounds.voltage is None
-                            or r["settings"]["reduction_mv"] < bounds.voltage
+                            or r["settings"]["reduction_mv"] == 0
+                            or r["settings"]["reduction_mv"]
+                            <= bounds.voltage - PRESETS[preset].voltage_margin_mv
                         )
                         assert (
-                            bounds.memory is None or r["settings"]["vram_mhz"] < bounds.memory
+                            bounds.memory is None
+                            or r["settings"]["vram_mhz"] == stock.vram_mhz
+                            or r["settings"]["vram_mhz"]
+                            <= bounds.memory - PRESETS[preset].vram_margin_mhz
                         )
                         assert r["settings"]["timing"] not in bounds.timings
         else:
             pytest.fail(f"Crash recovery did not terminate: {profile}/{preset}/{seed}")
         assert backend.read_telemetry().settings == final
+        crash_counts.append(card_crashes)
+        hours.append(backend.elapsed_seconds / 3600)
         verified = (
             journal.last_accepted() == final
             and journal.records[-1]["outcome"] == "verified in simulation"
         )
+        assert verified or final == stock
         accepted_count += verified
         safe += verified and backend.voltage_failure_probability(settings=final) < 0.05
         if backend.read_capabilities().vram_frequency:
@@ -128,23 +141,28 @@ def test_1000_seeded_cards_per_profile_and_preset(tmp_path, profile, preset):
         "memory_within_margin": memory_close / 1000 if frequency else None,
         "verification_failed": verification_failures / 1000,
         "hard_crashes": crashes,
+        "crashes_mean": statistics.mean(crash_counts),
+        "crashes_p90": sorted(crash_counts)[math.ceil(0.9 * len(crash_counts)) - 1],
+        "crashes_max": max(crash_counts),
+        "hours_median": statistics.median(hours),
+        "hours_p90": sorted(hours)[math.ceil(0.9 * len(hours)) - 1],
+        "hours_max": max(hours),
     }
     RESULTS.append(result)
     folder = Path("reports")
     folder.mkdir(exist_ok=True)
     (folder / "acceptance.json").write_text(json.dumps(RESULTS, indent=2))
-    print("M1.1 measured:", json.dumps(result), flush=True)
+    print("M1.2 measured:", json.dumps(result), flush=True)
     target = {"safe": 0.95, "balanced": 0.90}.get(preset)
-    misses = []
-    if target is not None and result["under_5pct_hourly"] < target:
-        misses.append("hourly risk target")
-    if frequency and (
-        result["memory_below_knee"] < 0.995 or result["memory_within_margin"] < 0.90
-    ):
-        misses.append("memory target")
-    if result["verification_failed"] <= 0.05:
-        misses.append("verification failure coverage target")
-    # A missed provisional gate is visible as XFAIL, not a passing safety claim.
-    # Continue measuring other profiles, then STOP for the owner/reviewer decision.
-    if misses:
-        pytest.xfail("M1.1 provisional target missed: " + ", ".join(misses))
+    assert result["crashes_mean"] <= 2.5, result
+    assert result["crashes_p90"] <= 4, result
+    if preset in ("safe", "balanced") and frequency:
+        assert result["hours_median"] <= 4, result
+        assert result["hours_p90"] <= 7, result
+    if target is not None:
+        assert result["under_5pct_hourly"] >= target, result
+    if frequency:
+        assert result["memory_below_knee"] >= 0.995, result
+        assert result["memory_within_margin"] >= 0.90, result
+    if PROFILES[profile].kind != "none":
+        assert result["verification_failed"] > 0.05, result
