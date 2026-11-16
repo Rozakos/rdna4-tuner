@@ -309,8 +309,19 @@ Done when repeated baseline runs agree within 1 % on both real cards.
 **STOP. Gate M5.**
 
 ### Later (do not start without the owner)
-Linux backend; RDNA 3 confirmation on a real card; small GUI; soak mode that backs off automatically after a driver crash
+Linux backend; RDNA 3 confirmation on a real card; small GUI (see below); soak mode that backs off automatically after a driver crash
 during normal use; packaged release built by CI with a checksum.
+
+GUI, when the owner starts it:
+- **PySide6, Qt Widgets only** (no QML, no web view). Widgets draw in software by default,
+  so the window stays usable while the card is being pushed to failure. Record PySide6
+  (LGPL) in `THIRD_PARTY.md` and ship Qt as separate libraries, not statically linked.
+- **A thin window over the CLI.** It starts the tuner as a separate process and shows
+  progress by reading the journal. It never calls a backend setter itself and holds no
+  tuning logic. A GUI crash must not stop or disturb a running tune.
+- After a reboot it reads the journal and shows where the run stopped and what to do next.
+- It lives in `tuner/gui/` and is an optional install (`pip install .[gui]`); the CLI and
+  the tests must work without PySide6 installed.
 
 ## 6. Risks
 
