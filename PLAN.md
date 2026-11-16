@@ -234,6 +234,47 @@ search retuning followed these misses. Functional CI success does not pass this 
 
 **STOP. Gate M1.1: Claude reviews.**
 
+### M1.2 — Fewer crashes, shorter tunes (no hardware)
+
+Reviewed at `1f44918`. R1–R7 and R9 are fixed and confirmed by re-running the probes.
+Reporting the R8 misses instead of retuning was the right call. Gate M1.1 is still **not
+passed**, for two things the new model exposed. Measured on 300 cards per preset:
+
+| | hard crashes per tune | synthetic hours per tune |
+|---|---|---|
+| `rdna4_offset`, safe / balanced | mean 9.6, 90th percentile 18, max 40 | median 5.7 / 6.3, 90th percentile 18 / 20, max 52 |
+| `no_vram_tuning`, safe / balanced | mean 7.3, 90th percentile 14, max 20 | median 3.6 / 3.8 |
+
+On a real card every hard crash is a frozen or rebooted PC. Fewer than 4 % of cards tune
+without one.
+
+- [ ] **S1 A crash must move the search down by more than 1 mV.** After a crash at `v` the
+      cap is `v - 1`, the coarse step jumps straight back to it, and it crashes again:
+      seed 42 on `no_vram_tuning` crashes at 120, 119, 118, 117, 116, 115 in a row. Treat a
+      crash as a failed test in the bisection: resume between the last passed value and the
+      crashed one, never within one preset margin of a crashed value. Same for VRAM.
+- [ ] **S2 Approach the edge so that a failure is usually a failed test, not a crash.** For
+      example a smaller coarse step, or longer tests as the steps get smaller. Your choice;
+      short tests are cheap and crashes are not.
+- [ ] **S3 Do not lower voltage for a memory failure.** In the final phase every failed
+      round takes a margin off voltage and VRAM together. Lower only what failed; when that
+      is unclear, lower VRAM first, because voltage already passed its own verification.
+- [ ] **S4 Cut wasted verification time** without shortening a passing verification. The
+      first verification starts at the 8-second edge, where a 30-minute run is almost sure
+      to fail. Step the test length up (for example 8 s, 60 s, 300 s) before the full run.
+- [ ] **S5 Acceptance additions**, same sweep, firm assertions:
+      - hard crashes per tune: mean at most 2.5 and 90th percentile at most 4;
+      - synthetic hours per tune for `safe` and `balanced`: median at most 4 and 90th
+        percentile at most 7 on VRAM-capable profiles;
+      - the R8 hourly-risk and VRAM targets stay as they are and are measured again;
+      - the verification-failure coverage target is dropped for `no_voltage_tuning` only;
+      - print crashes and hours per profile and preset next to the other numbers.
+      Replace `pytest.xfail` with real assertions for every target that is met. As before:
+      no simulator retuning; if a target is missed, report the numbers under "Open" and stop.
+- [ ] **S6 Report** the number of hard crashes recovered from and the total test time.
+
+**STOP. Gate M1.2: Claude reviews.**
+
 ### M2 — Windows backend, read-only (needs the owner)
 - [ ] C++ ADLX helper: `--limits`, `--status` only. Built by CI. No setter code path.
 - [ ] `adlx_windows.py` implementing the read half of `Backend`.
